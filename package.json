@@ -1,0 +1,91 @@
+{
+  "name": "blackjack-contract",
+  "version": "1.0.0",
+  "repository": "git@github.com:zoker-bet/blackjack-contract.git",
+  "license": "MIT",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "./dist/**/*",
+    "./dist/*"
+  ],
+  "scripts": {
+    "deploy": "ts-node scripts/deploy.ts",
+    "gen": "ts-node tests/utils.ts",
+    "mint": "ts-node scripts/mint.ts",
+    "claim": "ts-node scripts/claim.ts",
+    "deploy-nft": "ts-node scripts/deploy-nft.ts",
+    "withdraw": "ts-node scripts/withdraw.ts",
+    "market": "ts-node scripts/market.ts",
+    "liquidity": "ts-node scripts/addliquidity.ts",
+    "create-data": "ts-node scripts/createData.ts",
+    "mediaInfo": "ts-node scripts/mediaInfo.ts",
+    "build": "yarn build:contracts && yarn build:package",
+    "prepublishOnly": "yarn build",
+    "test": "hardhat test",
+    "compile": "hardhat clean && hardhat compile",
+    "typechain": "rm -rf ./typechain && typechain --show-stack-traces --target ethers-v5 --outDir ./typechain 'artifacts/!(build-info)/**/!(*.dbg*)*.json'",
+    "build:contracts": "yarn compile && yarn typechain",
+    "build:package": "rm -rf ./dist && tsc && cp -R typechain/*.d.ts dist/typechain && cp -R deployed-info dist && cp -R artifacts/contracts dist/artifacts",
+    "watch": "ts-node scripts/watch.ts"
+  },
+  "dependencies": {
+    "@chainlink/contracts": "^0.2.2",
+    "@nomiclabs/hardhat-etherscan": "^2.1.6",
+    "@openzeppelin/contracts": "^4.3.2",
+    "@uniswap/lib": "^4.0.1-alpha",
+    "@uniswap/v2-core": "^1.0.1",
+    "circomlibjs": "^0.1.7",
+    "ethers": "^5.0.19",
+    "snarkjs": "^0.6.10",
+    "truffle-flattener": "^1.5.0",
+    "ts-node-dev": "^2.0.0"
+  },
+  "devDependencies": {
+    "@ethersproject/keccak256": "^5.0.6",
+    "@nomiclabs/buidler": "^1.4.8",
+    "@nomiclabs/buidler-ethers": "^1.3.4",
+    "@nomiclabs/buidler-waffle": "^1.3.5",
+    "@nomiclabs/hardhat-ethers": "^2.2.2",
+    "@nomiclabs/hardhat-waffle": "^2.0.0",
+    "@typechain/ethers-v5": "^2.0.0",
+    "@types/chai": "^4.2.14",
+    "@types/chai-as-promised": "^7.1.3",
+    "@types/mocha": "^8.2.2",
+    "@types/node": "^14.14.2",
+    "buidler-typechain": "^0.2.2",
+    "chai": "^4.2.0",
+    "chai-as-promised": "^7.1.1",
+    "chokidar": "^3.4.3",
+    "dotenv": "^8.2.0",
+    "eth-sig-util": "^2.5.3",
+    "ethereum-waffle": "^2.3.0",
+    "ethereumjs-util": "^7.0.7",
+    "ethers": "^5.0.19",
+    "fs-extra": "^9.0.1",
+    "ganache-cli": "^6.12.0",
+    "hardhat": "^2.0.2",
+    "hardhat-deploy": "^0.7.0-beta.25",
+    "hardhat-gas-reporter": "^1.0.4",
+    "hardhat-typechain": "^0.3.3",
+    "husky": ">=4",
+    "lint-staged": ">=10",
+    "minimist": "^1.2.5",
+    "prettier": "^2.1.2",
+    "prettier-plugin-solidity": "^1.0.0-alpha.60",
+    "system-commands": "^1.1.7",
+    "ts-generator": "^0.1.1",
+    "ts-node": "^10.9.1",
+    "typechain": "^3.0.0",
+    "typechain-target-ethers": "^1.0.4",
+    "typescript": "^4.0.3"
+  },
+  "husky": {
+    "hooks": {
+      "pre-commit": "lint-staged"
+    }
+  },
+  "lint-staged": {
+    "*.{js,css,md,sol}": "prettier --write"
+  }
+}
