@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0
 pragma solidity ^0.8.4;
 
+import "@chainlink/contracts/src/v0.8/ConfirmedOwner.sol";
+import "@chainlink/contracts/src/v0.8/interfaces/AutomationCompatibleInterface.sol";
 import "./BoardManagerStorage.sol";
 import "./GameUtils.sol";
 import "./Deck.sol";
@@ -25,11 +27,16 @@ import "./Deck.sol";
 // 16: dealer win
 // 17: dealer bust
 
-contract BlackJack is GameUtils, DeckManagement {
+contract BlackJack is GameUtils, DeckManagement, ConfirmedOwner, AutomationCompatibleInterface {
     mapping(uint256 => Board) private boards;
     mapping(address => uint256) public getBoardIdFromAddress;
     uint256 public boardCounter;
     uint256 public betPrice = 10000000000000000;
+
+    address private s_keeperRegistryAddress;
+    uint256 private constant MIN_GAS_FOR_TRANSFER = 55_000;
+    uint256 private constant EXPIRED_BLOCK_NUMBER = 20;
+    uint256[] public runningGames;
 
     // Events
     event Hit(address indexed player, address indexed dealer, uint256 id);
@@ -43,14 +50,19 @@ contract BlackJack is GameUtils, DeckManagement {
     event Shuffle(uint256 id);
     event Draw(uint256 id);
     event EndGame(uint256 id, address indexed winner, uint256 playerReceive, uint256 dealerReceive);
+    event KeeperRegistryAddressUpdated(address oldAddress, address newAddress);
+
+    error OnlyKeeperRegistry();
 
     constructor(
         address _shuffle,
         address _decrypt1,
         address _decrypt3,
-        address _decrypt4
-    ) DeckManagement(_shuffle, _decrypt1, _decrypt3, _decrypt4) {
+        address _decrypt4,
+        address keeperRegistryAddress
+    ) DeckManagement(_shuffle, _decrypt1, _decrypt3, _decrypt4) ConfirmedOwner(msg.sender) {
         boardCounter = 0;
+        setKeeperRegistryAddress(keeperRegistryAddress);
     }
 
     function startNewGame(uint256[52] memory startingDeck, uint256 _betPrice) external payable {
@@ -107,6 +119,8 @@ contract BlackJack is GameUtils, DeckManagement {
         board.player = msg.sender;
         board.state = 3;
         this.shuffleVerifyAndSave(_id, a, b, c, input);
+        runningGames.push(_id);
+        updateAction(board, msg.sender);
         emit JoinGame(msg.sender, board.dealer, board.id);
     }
 
@@ -137,6 +151,7 @@ contract BlackJack is GameUtils, DeckManagement {
         this.userDecrypt4Card(gameId, 0, a, b, c, input);
         this.moveUserDecryptedIndex(gameId, 3);
         board.state = 4;
+        updateAction(board, msg.sender);
     }
 
     // Deal 3 cards
@@ -162,6 +177,7 @@ contract BlackJack is GameUtils, DeckManagement {
         uint256 point1 = getPoint(input[1]);
         uint256 point2 = getPoint(input[2]);
         board.canDouble = true;
+        updateAction(board, msg.sender);
 
         if (point0 == point1) {
             board.canSplit = true;
@@ -189,7 +205,7 @@ contract BlackJack is GameUtils, DeckManagement {
         board.dealerCards.push(input[2]);
 
         if (point2 == 1) {
-            board.canInsure = true;
+            // board.canInsure = true;
             board.dealerPointMax += 11;
             board.dealerPointMin += 1;
         } else {
@@ -220,6 +236,7 @@ contract BlackJack is GameUtils, DeckManagement {
             "This action only for player hit"
         );
         board.state = 6;
+        updateAction(board, msg.sender);
 
         uint8 id = this.getUserDecryptedIndex(gameId);
         this.userDecrypt1Card(gameId, id + 1, a, b, c, input);
@@ -240,6 +257,7 @@ contract BlackJack is GameUtils, DeckManagement {
         require(msg.value >= board.betPrice, "Insufficient fund");
         board.playerBet += board.betPrice;
         board.state = 8;
+        updateAction(board, msg.sender);
 
         uint8 id = this.getUserDecryptedIndex(gameId);
         this.userDecrypt4Card(gameId, id + 1, a, b, c, input);
@@ -266,6 +284,7 @@ contract BlackJack is GameUtils, DeckManagement {
         board.state = 7;
 
         this.dealerDecrypt1Card(gameId, id, a, b, c, input);
+        updateAction(board, msg.sender);
 
         if (input[0] <= 52) {
             uint256 point = getPoint(input[0]);
@@ -320,6 +339,7 @@ contract BlackJack is GameUtils, DeckManagement {
         board.state = 9;
 
         this.dealerDecrypt1Card(gameId, id, a, b, c, input);
+        updateAction(board, msg.sender);
 
         if (input[0] <= 52) {
             uint256 point = getPoint(input[0]);
@@ -351,8 +371,9 @@ contract BlackJack is GameUtils, DeckManagement {
         this.userDecrypt4Card(gameId, id + 1, a, b, c, input);
         this.moveUserDecryptedIndex(gameId, 3);
         board.canSplit = false;
-        board.canInsure = false;
+        // board.canInsure = false;
         board.canDouble = false;
+        updateAction(board, msg.sender);
         emit Stand(board.player, board.dealer, board.id);
     }
 
@@ -400,6 +421,7 @@ contract BlackJack is GameUtils, DeckManagement {
         );
 
         this.dealerDecrypt1Card(gameId, id, a, b, c, input);
+        updateAction(board, msg.sender);
 
         if (input[0] <= 52) {
             board.state = 10;
@@ -466,6 +488,7 @@ contract BlackJack is GameUtils, DeckManagement {
 
         this.dealerDecrypt1Card(gameId, 3, a, b, c, input);
         board.state = 20;
+        updateAction(board, msg.sender);
 
         if (input[0] <= 52) {
             uint256 point = getPoint(input[0]);
@@ -564,6 +587,57 @@ contract BlackJack is GameUtils, DeckManagement {
         emit EndGame(board.id, winner, playerReceive, dealerReceive);
         payable(board.player).transfer(playerReceive);
         payable(board.dealer).transfer(dealerReceive);
+        for(uint256 i; i < runningGames.length; i++) {
+            if (runningGames[i] == board.id) {
+                runningGames[i] = runningGames[runningGames.length - 1];
+                runningGames.pop();
+            }
+        }
+    }
+
+    function performUpkeep(bytes calldata performData) external override onlyKeeperRegistry {
+        uint256[] memory needsExit = abi.decode(performData, (uint256[]));
+        forceExit(needsExit);
+    }
+
+    function forceExit(uint256[] memory needsExit) private {
+        for (uint256 idx = 0; idx< needsExit.length; idx++) {
+            Board storage board = boards[needsExit[idx]];
+            if (board.latestTurn == board.player) {
+                //player win
+                board.state = 14;
+            } else {
+                board.state = 16;
+            }
+            endGame(board, board.latestTurn, board.playerBet);
+            if (gasleft() < MIN_GAS_FOR_TRANSFER) {
+                return;
+            }
+        }
+    }
+
+    function updateAction(Board storage board, address user) private {
+        board.latestBlock = block.number;
+        board.latestTurn = user;
+    }
+
+    function getExitGames() public view returns (uint256[] memory) {
+        uint256[] memory runningGames_ = runningGames;
+        uint256[] memory exitGames = new uint256[](runningGames_.length);
+        uint256 count = 0;
+        for (uint256 idx = 0; idx < runningGames_.length; idx++) {
+            Board memory board = boards[runningGames_[idx]];
+            if (block.number - board.latestBlock > EXPIRED_BLOCK_NUMBER) {
+                exitGames[count] = runningGames_[idx];
+                count++;
+            }
+        }
+        if (count != runningGames_.length) {
+            assembly {
+                mstore(exitGames, count)
+            }
+        }
+        return exitGames;
     }
 
     function getBoard(
@@ -581,7 +655,7 @@ contract BlackJack is GameUtils, DeckManagement {
             uint8, //State
             // bool, //canSplit
             bool, //canDouble
-            bool, //canInsure
+            // bool, //canInsure
             // bool, //isSplitting
             uint256, //Dealer's balance
             // Player's Info
@@ -600,7 +674,7 @@ contract BlackJack is GameUtils, DeckManagement {
             board.state,
             // board.canSplit,
             board.canDouble,
-            board.canInsure,
+            // board.canInsure,
             // board.isSplitting,
             board.dealerBal,
             board.playerBet,
@@ -608,4 +682,56 @@ contract BlackJack is GameUtils, DeckManagement {
             board.playerPointMin
         );
     }
+
+    //Chainlink Automation
+    /**
+     * @notice Get list of addresses that are underfunded and return payload compatible with Chainlink Automation Network
+     * @return upkeepNeeded signals if upkeep is needed, performData is an abi encoded list of addresses that need funds
+     */
+    function checkUpkeep(
+        bytes calldata
+    )
+        external
+        view
+        override
+        returns (bool upkeepNeeded, bytes memory performData)
+    {
+        uint256[] memory needsExit = getExitGames();
+        upkeepNeeded = needsExit.length > 0;
+        performData = abi.encode(needsExit);
+        return (upkeepNeeded, performData);
+    }
+    
+    modifier onlyKeeperRegistry() {
+        if (msg.sender != s_keeperRegistryAddress) {
+            revert OnlyKeeperRegistry();
+        }
+        _;
+    }
+
+    /**
+     * @notice Sets the Chainlink Automation registry address
+     */
+    function setKeeperRegistryAddress(
+        address keeperRegistryAddress
+    ) public onlyOwner {
+        require(keeperRegistryAddress != address(0));
+        emit KeeperRegistryAddressUpdated(
+            s_keeperRegistryAddress,
+            keeperRegistryAddress
+        );
+        s_keeperRegistryAddress = keeperRegistryAddress;
+    }
+
+    /**
+     * @notice Gets the Chainlink Automation registry address
+     */
+    function getKeeperRegistryAddress()
+        external
+        view
+        returns (address keeperRegistryAddress)
+    {
+        return s_keeperRegistryAddress;
+    }
+
 }
